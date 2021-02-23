@@ -26,7 +26,7 @@
 /*
  *	handle_events() -
  *	called When an event occurd in the listening directory.
- *	The function writes to apache html page and calls sendToUDP().
+ *	The function writes to apache html page and calls sendInfoToUDP().
  */
 
 static void handle_events(int fd, int *wd, int htmlFd, char* directory){
@@ -69,10 +69,11 @@ static void handle_events(int fd, int *wd, int htmlFd, char* directory){
 			time_t t = time(NULL);
 			struct tm* tm = localtime(&t);
 			
-			
+		if (event->mask & IN_OPEN)
+			printf("IN_OPEN: \n");
+				
 		if (!(event->mask & IN_OPEN))
 		{	
-			printf("IN_OPEN: ");
 			memset(eventName, 0, 1024);
 			memset(access, 0, 50);
 			memset(eventTime, 0, sizeof (eventTime));
@@ -83,18 +84,32 @@ static void handle_events(int fd, int *wd, int htmlFd, char* directory){
 			if (event->mask & IN_CLOSE_WRITE)
 				strcpy(access, "WRITE ");	
 			
+	
+			write(htmlFd, "<p>FILE ACCESSED: </p>\n", strlen("<p>FILE ACCESSED: </p>\n"));
 			
-		write(htmlFd, "<p>FILE ACCESSED: </p>\n", strlen("<p>FILE ACCESSED: </p>\n"));
-		if (event->len)	
-	 		write(htmlFd, event->name, strlen(event->name));
-	 	else
-	 		write(htmlFd, directory, strlen(directory));
+			if(event->mask & IN_ISDIR)
+				write(htmlFd, " [directory]<br>", strlen(" [directory]<br>"));
+			else
+				write(htmlFd, " [file]<br>", strlen(" [file]<br>"));
+				
+			if (event->len){	
+	 			write(htmlFd, event->name, strlen(event->name));
+	 			strcpy(eventName, event->name);
+	 		}
+	 		else{
+	 			write(htmlFd, directory, strlen(directory));
+	 			strcpy(eventName, directory);
+	 		}
 	 
-	 	write(htmlFd, "<p>ACCESS:</p>\n", strlen("<p>ACCESS:</p>\n"));
-	 	write(htmlFd, access, strlen(access));
-	 	write(htmlFd, "<p>TIME OF ACCESS:</p>\n", strlen("<p>TIME OF ACCESS:</p>\n"));
-	 	write(htmlFd, eventTime, strlen(eventTime));
-	 	write(htmlFd, "<br><br>\n\n", strlen("<br><br>\n\n"));
+	 		write(htmlFd, "<p>ACCESS:</p>\n", strlen("<p>ACCESS:</p>\n"));
+	 		write(htmlFd, access, strlen(access));
+	 		write(htmlFd, "<p>TIME OF ACCESS:</p>\n", strlen("<p>TIME OF ACCESS:</p>\n"));
+	 		write(htmlFd, eventTime, strlen(eventTime));
+	 		write(htmlFd, "<br><br>\n\n", strlen("<br><br>\n\n"));
+	 		
+	 		printf("%s\n",eventName);
+	 		printf("%s\n",access);
+	 		printf("%s\n",eventTime);
 	 	
 		}
 	}
