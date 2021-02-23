@@ -29,7 +29,97 @@
  */
 
 static void handle_events(int fd, int *wd, int htmlFd){
+
+	char buf[4096]
+	    __attribute__ ((aligned(__alignof__(struct inotify_event))));
+	const struct inotify_event *event;
+	int i;
+	ssize_t len;
+	char *ptr;
+	
+	char access[50];
+	char eventTime[32];
+	
+	/* Loop while events can be read from inotify file descriptor. */
+
+	for (;;) {
+
+		/* Read some events. */
+
+		len = read(fd, buf, sizeof buf);
+		if (len == -1 && errno != EAGAIN) {
+			perror("read");
+			exit(EXIT_FAILURE);
+		}
+
+
+		if (len <= 0)
+			break;
+
+		/* Loop over all events in the buffer */
+
+		char* str = malloc(1024);
+		for (ptr = buf; ptr < buf + len; ptr += sizeof(struct inotify_event) + event->len) 
+		{	
+			memset(access, 0, 50);
+
+			event = (const struct inotify_event *) ptr;
+
+			/* event time */
+			time_t t = time(NULL);
+			struct tm* tm = localtime(&t);
+			
+			
+		if (event->mask & IN_OPEN)
+			{	
+				printf("IN_OPEN: ");
+				memset(eventTime, 0, sizeof (eventTime));
+				strftime(eventTime, 26, "%Y-%m-%d %H:%M:%S", tm);
+				write(htmlFd, eventTime, strlen(eventTime));
+				write(htmlFd, ": ", strlen(": "));
+			
+			}
+                if(event->mask & IN_CREATE) {
+                    strcpy(access, "WRITE");
+                    if(event->mask & IN_ISDIR)
+                        printf("Directory \"%s\" was created\n", event->name);
+                    else 
+                        printf("File \"%s\" was created\n", event->name);
+                }
+                else if(event->mask & IN_MODIFY) {
+                    strcpy(access, "WRITE");
+                    if(event->mask & IN_ISDIR)
+                        printf("Directory \"%s\" was modified\n", event->name);
+                    else 
+                        printf("File \"%s\" was modified\n", event->name);
+                }
+                else if(event->mask & IN_DELETE) {
+                    strcpy(access, "READ");
+                    if(event->mask & IN_ISDIR)
+                        printf("Directory \"%s\" was deleted\n", event->name);
+                    else 
+                        printf("File \"%s\" was deleted\n", event->name);
+                }
+                else if(event->mask & IN_MOVE) {
+                    strcpy(access, "READ");
+                    if(event->mask & IN_ISDIR)
+                        printf("Directory \"%s\" was moved\n", event->name);
+                    else 
+                        printf("File \"%s\" was moved\n", event->name);
+                
+                	
+	 	}
+	 	
+	 	write(htmlFd, access, strlen(access));
+	}
+    }
 }
+/*
+ *	Function: sendInfoToUDP()
+ *	Description: When theres a notify event, sends a message to the netcat server connection.
+ *
+ */
+
 
 int main(int argc, char *argv[]) {
 
@@ -48,41 +138,30 @@ int main(int argc, char *argv[]) {
 				return EXIT_FAILURE;
 		}
 	}
-	//printf("%s", dic_input);
-	//printf("%d", argc);
+	printf("%s\n", dic_input);
+	printf("%s\n", ip_input);
 	
 	//webserver section -
 	char buf;
 	int fd, i, poll_num;
 	int wd;
+	int htmlFd;
 	nfds_t nfds;
 	struct pollfd fds[2];
 	
-	int htmlFd = open("/var/www/html/index.html", O_WRONLY | O_TRUNC);
+	/* Open 'index.html' to append events */
+	htmlFd = open("/var/www/html/index.html", O_WRONLY | O_RDWR);
+	off_t off_t = lseek(htmlFd , SEEK_SET , SEEK_END);
+	lseek(htmlFd , off_t , SEEK_SET);
+	
 	if(htmlFd == -1)
 		perror("open");
-	
+		printf("hereeeeeee.\n");
 	if (argc != 5) 
-    {
+    	{
 		printf("bad arguments!\n");
 		exit(EXIT_FAILURE);
 	}
-	
-	// UDP client
-	int sockfd;
-	struct sockaddr_in  server_addr;
-	if((sockfd = socket(AF_INET , SOCK_DGRAM, 0)) < 0)
-	{
-		perror("socket");
-		exit(EXIT_FAILURE);
-	}
-	server_addr.sin_family = AF_INET;
-	if(!inet_aton(ip_input , &server_addr.sin_addr))
-	{
-		perror("inet_aton");
-		exit(EXIT_FAILURE);
-	}
-
     
 	printf("Press 'ENTER' key to terminate.\n");
 
@@ -123,6 +202,7 @@ int main(int argc, char *argv[]) {
 	fds[1].events = POLLIN;
 
 	/* Wait for events and/or terminal input */
+	write(htmlFd, "<html><head>  <meta http-equiv= 'refresh' content= '5'></head><body>", strlen("<html><head>  <meta http-equiv= 'refresh' content= '5'></head><body>"));
 
 	printf("Listening for events.\n");
 	
@@ -150,7 +230,6 @@ int main(int argc, char *argv[]) {
 			if (fds[1].revents & POLLIN) {
 
 				/* Inotify events are available */
-
 				handle_events(fd, &wd, htmlFd);
 			}
 		}
@@ -158,8 +237,10 @@ int main(int argc, char *argv[]) {
 
 	printf("Listening for events stopped.\n");
 
-	/* Close inotify file descriptor */
+	write(htmlFd, "</body></html>", strlen("</body></html>"));
 
+	/* Close inotify file descriptor */
+	close(htmlFd);
 	close(fd);
 	exit(EXIT_SUCCESS);
 }
