@@ -15,6 +15,7 @@
 #include <fcntl.h>
 #include <string.h>
 #include <sys/socket.h> 
+#include <pthread.h>
 #include <sys/types.h> 
 #include <netinet/in.h> 
 #include <arpa/inet.h>
@@ -23,12 +24,12 @@
 #include <execinfo.h>				// for PATH_MAX define
 
 /*
- *	Function: handle_events()
- *	Description: , handle_event is called When an event occurd in the listening directory.
+ *	handle_events() -
+ *	called When an event occurd in the listening directory.
  *	The function writes to apache html page and calls sendToUDP().
  */
 
-static void handle_events(int fd, int *wd, int htmlFd){
+static void handle_events(int fd, int *wd, int htmlFd, char* directory){
 
 	char buf[4096]
 	    __attribute__ ((aligned(__alignof__(struct inotify_event))));
@@ -39,6 +40,7 @@ static void handle_events(int fd, int *wd, int htmlFd){
 	
 	char access[50];
 	char eventTime[32];
+	char eventName[1024];
 	
 	/* Loop while events can be read from inotify file descriptor. */
 
@@ -61,8 +63,6 @@ static void handle_events(int fd, int *wd, int htmlFd){
 		char* str = malloc(1024);
 		for (ptr = buf; ptr < buf + len; ptr += sizeof(struct inotify_event) + event->len) 
 		{	
-			memset(access, 0, 50);
-
 			event = (const struct inotify_event *) ptr;
 
 			/* event time */
@@ -70,55 +70,36 @@ static void handle_events(int fd, int *wd, int htmlFd){
 			struct tm* tm = localtime(&t);
 			
 			
-		if (event->mask & IN_OPEN)
-			{	
-				printf("IN_OPEN: ");
-				memset(eventTime, 0, sizeof (eventTime));
-				strftime(eventTime, 26, "%Y-%m-%d %H:%M:%S", tm);
-				write(htmlFd, eventTime, strlen(eventTime));
-				write(htmlFd, ": ", strlen(": "));
+		if (!(event->mask & IN_OPEN))
+		{	
+			printf("IN_OPEN: ");
+			memset(eventName, 0, 1024);
+			memset(access, 0, 50);
+			memset(eventTime, 0, sizeof (eventTime));
+			strftime(eventTime, 26, "%Y-%m-%d %H:%M:%S", tm);
+
+			if (event->mask & IN_CLOSE_NOWRITE)
+				strcpy(access, "NOWRITE ");
+			if (event->mask & IN_CLOSE_WRITE)
+				strcpy(access, "WRITE ");	
 			
-			}
-                if(event->mask & IN_CREATE) {
-                    strcpy(access, "WRITE");
-                    if(event->mask & IN_ISDIR)
-                        printf("Directory \"%s\" was created\n", event->name);
-                    else 
-                        printf("File \"%s\" was created\n", event->name);
-                }
-                else if(event->mask & IN_MODIFY) {
-                    strcpy(access, "WRITE");
-                    if(event->mask & IN_ISDIR)
-                        printf("Directory \"%s\" was modified\n", event->name);
-                    else 
-                        printf("File \"%s\" was modified\n", event->name);
-                }
-                else if(event->mask & IN_DELETE) {
-                    strcpy(access, "READ");
-                    if(event->mask & IN_ISDIR)
-                        printf("Directory \"%s\" was deleted\n", event->name);
-                    else 
-                        printf("File \"%s\" was deleted\n", event->name);
-                }
-                else if(event->mask & IN_MOVE) {
-                    strcpy(access, "READ");
-                    if(event->mask & IN_ISDIR)
-                        printf("Directory \"%s\" was moved\n", event->name);
-                    else 
-                        printf("File \"%s\" was moved\n", event->name);
-                
-                	
-	 	}
-	 	
+			
+		write(htmlFd, "<p>FILE ACCESSED: </p>\n", strlen("<p>FILE ACCESSED: </p>\n"));
+		if (event->len)	
+	 		write(htmlFd, event->name, strlen(event->name));
+	 	else
+	 		write(htmlFd, directory, strlen(directory));
+	 
+	 	write(htmlFd, "<p>ACCESS:</p>\n", strlen("<p>ACCESS:</p>\n"));
 	 	write(htmlFd, access, strlen(access));
+	 	write(htmlFd, "<p>TIME OF ACCESS:</p>\n", strlen("<p>TIME OF ACCESS:</p>\n"));
+	 	write(htmlFd, eventTime, strlen(eventTime));
+	 	write(htmlFd, "<br><br>\n\n", strlen("<br><br>\n\n"));
+	 	
+		}
 	}
     }
 }
-/*
- *	Function: sendInfoToUDP()
- *	Description: When theres a notify event, sends a message to the netcat server connection.
- *
- */
 
 
 int main(int argc, char *argv[]) {
@@ -150,13 +131,11 @@ int main(int argc, char *argv[]) {
 	struct pollfd fds[2];
 	
 	/* Open 'index.html' to append events */
-	htmlFd = open("/var/www/html/index.html", O_WRONLY | O_RDWR);
-	off_t off_t = lseek(htmlFd , SEEK_SET , SEEK_END);
-	lseek(htmlFd , off_t , SEEK_SET);
+	htmlFd = open("/var/www/html/index.html", O_WRONLY | O_TRUNC);
 	
 	if(htmlFd == -1)
 		perror("open");
-		printf("hereeeeeee.\n");
+		
 	if (argc != 5) 
     	{
 		printf("bad arguments!\n");
@@ -230,7 +209,7 @@ int main(int argc, char *argv[]) {
 			if (fds[1].revents & POLLIN) {
 
 				/* Inotify events are available */
-				handle_events(fd, &wd, htmlFd);
+				handle_events(fd, &wd, htmlFd, dic_input);
 			}
 		}
 	}
