@@ -23,13 +23,71 @@
 #include <getopt.h>
 #include <execinfo.h>				// for PATH_MAX define
 
+#define PORT 10000				//Netcat server port
+#define SIZE 2048				
+
+/*
+*	sendInfoToUDP()-
+	ends a message to the netcat server When theres a notify event.
+*/
+void sendInfoToUDP(char* name, char* access, char* time, char* ip){
+
+	int nsent;
+	char SendClient[SIZE];
+	memset(SendClient, 0, sizeof(SendClient));
+
+	//UDP client
+	int sock;
+	struct sockaddr_in  server_addr = {0};
+	server_addr.sin_family = AF_INET;
+	server_addr.sin_port = htons(PORT);
+	
+	sock = socket(AF_INET, SOCK_DGRAM, 0);
+	if(sock < 0)
+	{
+		perror("\nsocket");
+		exit(EXIT_FAILURE);
+	}
+	
+	if(inet_pton(AF_INET, ip, &server_addr.sin_addr.s_addr)<=0)  
+   	{ 
+        	perror("\nAddress not supported"); 
+        	exit(EXIT_FAILURE); 
+   	} 
+	
+	
+	if(connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0)
+	{
+		perror("\nconnect");
+		exit(EXIT_FAILURE);
+	}
+	
+	strcpy(SendClient, "\nFILE ACCESSED: ");
+	strcat(SendClient, name);	
+	strcat(SendClient, "\nACCESS: ");
+	strcat(SendClient, access);
+	strcat(SendClient, "\nTIME OF ACCESS: ");
+	strcat(SendClient, time);
+	strcat(SendClient, "\n\0");
+	
+	if((nsent = send(sock, SendClient, strlen(SendClient), 0)) < 0)
+	{
+		perror("\nrecv");
+		exit(EXIT_FAILURE);
+	}
+	
+	close(sock);
+
+	exit(0);
+}
+
 /*
  *	handle_events() -
  *	called When an event occurd in the listening directory.
  *	The function writes to apache html page and calls sendInfoToUDP().
  */
 
-static void handle_events(int fd, int *wd, int htmlFd, char* directory){
+static void handle_events(int fd, int *wd, int htmlFd, char* directory, char* ip){
 
 	char buf[4096]
 	    __attribute__ ((aligned(__alignof__(struct inotify_event))));
@@ -41,6 +99,9 @@ static void handle_events(int fd, int *wd, int htmlFd, char* directory){
 	char access[50];
 	char eventTime[32];
 	char eventName[1024];
+	
+	//netcat
+	pid_t pid;
 	
 	/* Loop while events can be read from inotify file descriptor. */
 
@@ -69,8 +130,8 @@ static void handle_events(int fd, int *wd, int htmlFd, char* directory){
 			time_t t = time(NULL);
 			struct tm* tm = localtime(&t);
 			
-		if (event->mask & IN_OPEN)
-			printf("IN_OPEN: \n");
+		/*if (event->mask & IN_OPEN)
+			printf("IN_OPEN: \n");*/
 				
 		if (!(event->mask & IN_OPEN))
 		{	
@@ -80,37 +141,48 @@ static void handle_events(int fd, int *wd, int htmlFd, char* directory){
 			strftime(eventTime, 26, "%Y-%m-%d %H:%M:%S", tm);
 
 			if (event->mask & IN_CLOSE_NOWRITE)
-				strcpy(access, "NOWRITE ");
+				strcpy(access, "NO_WRITE ");
 			if (event->mask & IN_CLOSE_WRITE)
 				strcpy(access, "WRITE ");	
 			
 	
-			write(htmlFd, "<p>FILE ACCESSED: </p>\n", strlen("<p>FILE ACCESSED: </p>\n"));
+			write(htmlFd, "FILE ACCESSED:  ", strlen("FILE ACCESSED:  "));
 			
 			if(event->mask & IN_ISDIR)
-				write(htmlFd, " [directory]<br>", strlen(" [directory]<br>"));
-			else
-				write(htmlFd, " [file]<br>", strlen(" [file]<br>"));
+				write(htmlFd, " [directory] ", strlen(" [directory] "));
 				
-			if (event->len){	
-	 			write(htmlFd, event->name, strlen(event->name));
-	 			strcpy(eventName, event->name);
+			else
+				write(htmlFd, " [file] ", strlen(" [file] "));
+				
+			if (event->len){
+				if(event->mask & IN_ISDIR){
+					strcpy(eventName, directory);
+					strcat(eventName, "/");
+	 				strcat(eventName, event->name);
+	 				write(htmlFd, eventName, strlen(eventName));
+				}
+				else{
+	 				write(htmlFd, event->name, strlen(event->name));
+	 				strcpy(eventName, event->name);
+	 			}
 	 		}
 	 		else{
 	 			write(htmlFd, directory, strlen(directory));
 	 			strcpy(eventName, directory);
 	 		}
 	 
-	 		write(htmlFd, "<p>ACCESS:</p>\n", strlen("<p>ACCESS:</p>\n"));
+	 		write(htmlFd, ", &nbspACCESS:  ", strlen(", &nbspACCESS:  "));
 	 		write(htmlFd, access, strlen(access));
-	 		write(htmlFd, "<p>TIME OF ACCESS:</p>\n", strlen("<p>TIME OF ACCESS:</p>\n"));
+	 		write(htmlFd, ", &nbspTIME OF ACCESS: ", strlen(", &nbspTIME OF ACCESS: "));
 	 		write(htmlFd, eventTime, strlen(eventTime));
 	 		write(htmlFd, "<br><br>\n\n", strlen("<br><br>\n\n"));
+	 		 		
 	 		
-	 		printf("%s\n",eventName);
-	 		printf("%s\n",access);
-	 		printf("%s\n",eventTime);
-	 	
+			pid = fork();
+			if(pid == -1)
+				perror("fork");
+			if(pid == 0)
+				sendInfoToUDP(eventName, access, eventTime, ip);
 		}
 	}
     }
@@ -224,7 +296,7 @@ int main(int argc, char *argv[]) {
 			if (fds[1].revents & POLLIN) {
 
 				/* Inotify events are available */
-				handle_events(fd, &wd, htmlFd, dic_input);
+				handle_events(fd, &wd, htmlFd, dic_input, ip_input);
 			}
 		}
 	}
