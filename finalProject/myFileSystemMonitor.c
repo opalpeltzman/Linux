@@ -21,10 +21,139 @@
 #include <arpa/inet.h>
 #include <libcli.h>
 #include <getopt.h>
+#include <semaphore.h>
 #include <execinfo.h>				// for PATH_MAX define
 
 #define PORT 10000				//Netcat server port
-#define SIZE 2048				
+#define SIZE 2048
+#define BT_BUF_SIZE 100
+#define TELNET_PORT 2468	//Telnet listening port
+
+int BT_flag = 0;
+char BT_buffer[BT_BUF_SIZE];
+sem_t semaphore;
+int listenOnTelnet = 1;
+int listenSock;
+
+/*
+ *	backTrace() -
+ *	Using backtrace system fill telnetBuffer with the call stack history.
+ *
+ */
+void backTrace()
+{	printf("%s\n", BT_buffer);
+	int j, nptrs=0;
+	void *buffer[BT_BUF_SIZE];
+	char **strings;
+	char ToChar[16];
+	
+	memset(BT_buffer, 0, sizeof(BT_buffer));
+	//memset(buffer, 0, sizeof(buffer));
+	memset(ToChar, 0, sizeof(ToChar));
+	
+	nptrs = backtrace(buffer, BT_BUF_SIZE);
+	printf("backtrace() returned %d addresses\n", nptrs);
+
+	/* The call backtrace_symbols_fd(buffer, nptrs, STDOUT_FILENO)
+	would produce similar output to the following: */
+	
+
+	strings = backtrace_symbols(buffer, nptrs);
+	if (strings == NULL) {
+		perror("backtrace_symbols");
+		exit(EXIT_FAILURE);
+	}	
+	
+	for (j = 0; j < nptrs; j++)
+	{
+		sprintf( ToChar, "%d: ", j+1 );
+		strcat(BT_buffer, ToChar);
+		strcat(BT_buffer, strings[j]);
+		strcat(BT_buffer, "\n");
+	}
+	printf("%s\n", BT_buffer);
+	
+
+	free(strings);
+}
+
+void  __attribute__ ((no_instrument_function))  __cyg_profile_func_enter (void *this_fn,
+                                         void *call_site)
+{
+	if(BT_flag == 1)
+	{
+		BT_flag = 0;
+        	backTrace();
+        	sem_post(&semaphore);
+        }
+
+}
+				
+int void cmd_backtrace(struct cli_def *cli, char *command, char *argv[], int argc)
+{
+	BT_flag = 1;
+	sem_wait(&semaphore);
+	cli_print(cli, BT_buffer);
+	return CLI_OK;
+}
+
+int callback(const char* username, const char* pass)
+{
+	if(username == "user" && pass == "123"){
+		
+		return CLI_OK;
+	}
+		
+	return CLI_ERROR;
+}
+
+/*
+ *	telnetBackTrace()-
+ *	libcli implementation for telnet client connection.
+ *
+ */
+
+void telnetBackTrace()
+{
+	struct sockaddr_in servaddr;
+	struct cli_command *c;
+	struct cli_def *cli;
+	int on = 1, x;			// vars for socket handling.
+
+
+	cli = cli_init();
+	cli_set_hostname(cli, "Notify");
+	cli_set_banner(cli, "CLI program.");
+	cli_allow_user(cli, "user", "123");
+	cli_set_auth_callback(cli, callback);
+	cli_register_command(cli, NULL, "backtrace", cmd_backtrace, PRIVILEGE_UNPRIVILEGED, MODE_EXEC, NULL);
+	
+	
+	listenSock = socket(AF_INET, SOCK_STREAM, 0);
+	setsockopt(listenSock, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+
+	// Listening on port 2468
+	memset(&servaddr, 0, sizeof(servaddr));
+	servaddr.sin_family = AF_INET;
+	servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+	servaddr.sin_port = htons(TELNET_PORT);
+	bind(listenSock, (struct sockaddr *)&servaddr, sizeof(servaddr));
+
+	// Wait for a connection
+	listen(listenSock, 50);
+
+	while (listenOnTelnet && (x = accept(listenSock, NULL, 0)))
+	{
+		// Pass the connection off to libcli
+		cli_loop(cli, x);
+		close(x);
+	}
+
+	// Free data structures
+	cli_done(cli);
+	pthread_exit(0);
+}
+
 
 /*
 *	sendInfoToUDP()-
@@ -194,6 +323,20 @@ int main(int argc, char *argv[]) {
 	// getopt 
 	int option;
 	char *dic_input, *ip_input;
+	
+	if (argc != 5) 
+    	{
+		printf("bad arguments!\n");
+		exit(EXIT_FAILURE);
+	}
+	
+	// telnet
+	int bt_thread;
+	pthread_t tid;
+
+	if( pthread_create(&tid, NULL, telnetBackTrace, &bt_thread) != 0 )
+      			perror("Failed to create thread");
+      			
 	while((option = getopt(argc, argv, "d:i:")) != -1){
     	switch (option) {
 			case 'd':
@@ -223,11 +366,6 @@ int main(int argc, char *argv[]) {
 	if(htmlFd == -1)
 		perror("open");
 		
-	if (argc != 5) 
-    	{
-		printf("bad arguments!\n");
-		exit(EXIT_FAILURE);
-	}
     
 	printf("Press 'ENTER' key to terminate.\n");
 
@@ -302,6 +440,10 @@ int main(int argc, char *argv[]) {
 	}
 
 	printf("Listening for events stopped.\n");
+	
+	// close telnet
+	listenOnTelnet = 0;
+	close(listenSock);
 
 	write(htmlFd, "</body></html>", strlen("</body></html>"));
 
