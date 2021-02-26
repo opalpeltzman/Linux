@@ -1,10 +1,3 @@
-/*
- * myFileSystemMonitor.c
- *
- *  Created on: 6 Feb 2021
- *      Author: opvmlinux
- */
-
 #include <errno.h>
 #include <poll.h>
 #include <stdio.h>
@@ -22,11 +15,17 @@
 #include <libcli.h>
 #include <getopt.h>
 #include <semaphore.h>
-#include <execinfo.h>				// for PATH_MAX define
+#include <execinfo.h>				
 
-#define PORT 10000				//Netcat server port
-#define SIZE 2048
-#define BT_BUF_SIZE 100
+#ifdef __GNUC__
+#define UNUSED(d) d __attribute__((unused))
+#else
+#define UNUSED(d) d
+#endif
+
+#define PORT 10000		//Netcat server port
+#define SIZE 2048		//Telnet server port
+#define BT_BUF_SIZE 1024
 #define TELNET_PORT 2468	//Telnet listening port
 
 int BT_flag = 0;
@@ -41,15 +40,14 @@ int listenSock;
  *
  */
 void backTrace()
-{	printf("%s\n", BT_buffer);
-	int j, nptrs=0;
+{	
+	int j = 0, nptrs = 0;
 	void *buffer[BT_BUF_SIZE];
 	char **strings;
 	char ToChar[16];
 	
 	memset(BT_buffer, 0, sizeof(BT_buffer));
-	//memset(buffer, 0, sizeof(buffer));
-	memset(ToChar, 0, sizeof(ToChar));
+	memset(buffer, 0, sizeof(buffer));
 	
 	nptrs = backtrace(buffer, BT_BUF_SIZE);
 	printf("backtrace() returned %d addresses\n", nptrs);
@@ -70,9 +68,7 @@ void backTrace()
 		strcat(BT_buffer, ToChar);
 		strcat(BT_buffer, strings[j]);
 		strcat(BT_buffer, "\n");
-	}
-	printf("%s\n", BT_buffer);
-	
+	}	
 
 	free(strings);
 }
@@ -88,22 +84,19 @@ void  __attribute__ ((no_instrument_function))  __cyg_profile_func_enter (void *
         }
 
 }
-				
-int void cmd_backtrace(struct cli_def *cli, char *command, char *argv[], int argc)
+			
+int cmd_backtrace(struct cli_def *cli, UNUSED(const char *command), UNUSED(char *argv[]), UNUSED(int argc))
 {
 	BT_flag = 1;
 	sem_wait(&semaphore);
-	cli_print(cli, BT_buffer);
+	cli_print(cli,"%s\n",BT_buffer);
 	return CLI_OK;
 }
 
 int callback(const char* username, const char* pass)
 {
-	if(username == "user" && pass == "123"){
-		
-		return CLI_OK;
-	}
-		
+	if(username == "user" && pass == "123")
+		return CLI_OK;	
 	return CLI_ERROR;
 }
 
@@ -113,7 +106,7 @@ int callback(const char* username, const char* pass)
  *
  */
 
-void telnetBackTrace()
+void* telnetBackTrace()
 {
 	struct sockaddr_in servaddr;
 	struct cli_command *c;
@@ -259,8 +252,6 @@ static void handle_events(int fd, int *wd, int htmlFd, char* directory, char* ip
 			time_t t = time(NULL);
 			struct tm* tm = localtime(&t);
 			
-		/*if (event->mask & IN_OPEN)
-			printf("IN_OPEN: \n");*/
 				
 		if (!(event->mask & IN_OPEN))
 		{	
@@ -334,19 +325,20 @@ int main(int argc, char *argv[]) {
 	int bt_thread;
 	pthread_t tid;
 
-	if( pthread_create(&tid, NULL, telnetBackTrace, &bt_thread) != 0 )
-      			perror("Failed to create thread");
+	if( pthread_create(&tid, NULL, telnetBackTrace, (void*)&bt_thread) )
+      			//perror("Failed to create thread");
+		return 1;
       			
 	while((option = getopt(argc, argv, "d:i:")) != -1){
     	switch (option) {
-			case 'd':
-				dic_input = optarg;
-				break;
-			case 'i':
-				ip_input = optarg;
-				break;
-			default:
-				return EXIT_FAILURE;
+		case 'd':
+			dic_input = optarg;
+			break;
+		case 'i':
+			ip_input = optarg;
+			break;
+		default:
+			return EXIT_FAILURE;
 		}
 	}
 	printf("%s\n", dic_input);
@@ -452,4 +444,3 @@ int main(int argc, char *argv[]) {
 	close(fd);
 	exit(EXIT_SUCCESS);
 }
-
